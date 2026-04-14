@@ -7,12 +7,14 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
+use crate::aws::cloudwatch::CloudWatchService;
 use crate::aws::config::load_sdk_config;
 use crate::aws::sns::SnsService;
 use crate::aws::sqs::SqsService;
 use crate::event::{AppEvent, start_event_handler};
 use crate::models::{
-    AWS_REGIONS, QueueDetail, QueueInfo, SortMode, SqsSnsSubscription, TopicDetail, TopicInfo, View,
+    AWS_REGIONS, QueueCloudWatchMetrics, QueueDetail, QueueInfo, QueueInsightsState, SortMode,
+    SqsSnsSubscription, TopicDetail, TopicInfo, View, compute_queue_insights,
 };
 use crate::persist;
 use crate::ui;
@@ -26,11 +28,32 @@ const AUTO_REFRESH_TICKS: u64 = 30_000 / TICK_RATE_MS;
 /// Ticks to wait after the last config change before firing a refresh (~1 s).
 const DEBOUNCE_TICKS: u64 = 4;
 
+fn is_manual_refresh_key(key: crossterm::event::KeyEvent) -> bool {
+    let allowed_modifiers = KeyModifiers::SUPER | KeyModifiers::SHIFT;
+    matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+        && key.modifiers.contains(KeyModifiers::SUPER)
+        && key.modifiers.difference(allowed_modifiers).is_empty()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusLevel {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusMessage {
+    pub level: StatusLevel,
+    pub text: String,
+}
+
 /// Central application state.
 pub struct App {
     // Navigation
     pub view: View,
     pub previous_view: View,
+    pub quit_return_view: Option<View>,
 
     // AWS connection settings
     pub profiles: Vec<String>,
@@ -41,6 +64,7 @@ pub struct App {
     pub queues: Vec<QueueInfo>,
     pub topics: Vec<TopicInfo>,
     pub queue_detail: Option<QueueDetail>,
+    pub queue_insights: Option<QueueInsightsState>,
     pub topic_detail: Option<TopicDetail>,
     /// SNS→SQS subscriptions, keyed by queue ARN.
     pub sqs_sns_map: HashMap<String, Vec<SqsSnsSubscription>>,
@@ -49,7 +73,7 @@ pub struct App {
     pub list_cursor: usize,
     pub detail_scroll: usize,
     pub loading: bool,
-    pub status: Option<String>,
+    pub status: Option<StatusMessage>,
 
     // Detail panel focus (SQS detail only)
     /// When true, ↑↓/j/k scroll the SNS subscriptions panel instead of attributes.
@@ -70,11 +94,15 @@ pub struct App {
     pub search_query: String,
     pub search_active: bool,
     pub sort_mode: SortMode,
+    pub should_quit: bool,
 
     // Internal
     tick_counter: u64,
     pending_refresh: bool,
     debounce_ticks: u64,
+    pending_requests: usize,
+    active_sqs_queue_url: Option<String>,
+    queue_cloudwatch_metrics: Option<Result<QueueCloudWatchMetrics, String>>,
     pub loading_tick: u64,
     pub event_tx: mpsc::UnboundedSender<AppEvent>,
 }
@@ -100,12 +128,14 @@ impl App {
         Self {
             view: View::SqsList,
             previous_view: View::SqsList,
+            quit_return_view: None,
             profiles,
             profile_idx,
             region_idx,
             queues: Vec::new(),
             topics: Vec::new(),
             queue_detail: None,
+            queue_insights: None,
             topic_detail: None,
             sqs_sns_map: HashMap::new(),
             list_cursor: 0,
@@ -121,9 +151,13 @@ impl App {
             search_query: String::new(),
             search_active: false,
             sort_mode: SortMode::default(),
+            should_quit: false,
             tick_counter: 0,
             pending_refresh: false,
             debounce_ticks: 0,
+            pending_requests: 0,
+            active_sqs_queue_url: None,
+            queue_cloudwatch_metrics: None,
             loading_tick: 0,
             event_tx,
         }
@@ -143,11 +177,10 @@ impl App {
 
     /// Queues matching `search_query`, ordered by `sort_mode`.
     pub fn filtered_queues(&self) -> Vec<QueueInfo> {
-        let q = self.search_query.to_lowercase();
         let mut result: Vec<QueueInfo> = self
             .queues
             .iter()
-            .filter(|queue| q.is_empty() || queue.name.to_lowercase().contains(&q))
+            .filter(|queue| crate::models::matches_friendly_filter(&self.search_query, &queue.name))
             .cloned()
             .collect();
         match self.sort_mode {
@@ -164,10 +197,9 @@ impl App {
 
     /// Topics matching `search_query` (always name-sorted).
     pub fn filtered_topics(&self) -> Vec<TopicInfo> {
-        let q = self.search_query.to_lowercase();
         self.topics
             .iter()
-            .filter(|t| q.is_empty() || t.name.to_lowercase().contains(&q))
+            .filter(|t| crate::models::matches_friendly_filter(&self.search_query, &t.name))
             .cloned()
             .collect()
     }
@@ -188,20 +220,13 @@ impl App {
     pub fn on_key(&mut self, key: crossterm::event::KeyEvent) {
         use KeyCode::*;
 
-        // 'c' copies context to clipboard from any view (except while typing in search).
-        if key.code == Char('c') && !self.search_active {
-            match crate::context::build(self) {
-                Some(text) => {
-                    if crate::clipboard::copy(&text) {
-                        self.status = Some("✓ copied to clipboard".to_string());
-                    } else {
-                        self.status = Some("✗ clipboard unavailable".to_string());
-                    }
-                }
-                None => {
-                    self.status = Some("nothing to copy in this view".to_string());
-                }
-            }
+        if self.view == View::QuitConfirm {
+            self.on_key_quit_confirm(key);
+            return;
+        }
+
+        if is_manual_refresh_key(key) {
+            self.trigger_refresh();
             return;
         }
 
@@ -230,14 +255,35 @@ impl App {
             return;
         }
 
-        match &self.view {
-            View::Help => {
-                self.view = self.previous_view.clone();
+        if key.code == Char('q') {
+            self.open_quit_confirm();
+            return;
+        }
+
+        // 'c' copies context to clipboard from any view (except while typing in search).
+        if key.code == Char('c') {
+            match crate::context::build(self) {
+                Some(text) => {
+                    if crate::clipboard::copy(&text) {
+                        self.set_status(StatusLevel::Success, "copied to clipboard");
+                    } else {
+                        self.set_status(StatusLevel::Error, "clipboard unavailable");
+                    }
+                }
+                None => {
+                    self.set_status(StatusLevel::Info, "nothing to copy in this view");
+                }
             }
+            return;
+        }
+
+        match &self.view {
+            View::Help => self.on_key_help(key),
             View::ProfilePicker | View::RegionPicker => self.on_key_picker(key),
             View::SqsList | View::SnsList => self.on_key_list(key),
             View::SqsDetail | View::SnsDetail => self.on_key_detail(key),
             View::DependencyMap => self.on_key_dep_map(key),
+            View::QuitConfirm => self.on_key_quit_confirm(key),
         }
     }
 
@@ -286,11 +332,15 @@ impl App {
             }
             // Open detail
             Enter => self.open_detail(),
-            // Refresh
-            F(5) => self.trigger_refresh(),
             // Search
             Char('/') => {
                 self.search_active = true;
+            }
+            Esc => {
+                if !self.search_query.is_empty() {
+                    self.search_query.clear();
+                    self.list_cursor = 0;
+                }
             }
             // Sort (SQS only): Name → ↓msgs → ↑msgs → Name
             Char('s') => {
@@ -352,7 +402,7 @@ impl App {
     fn on_key_dep_map(&mut self, key: crossterm::event::KeyEvent) {
         use KeyCode::*;
         match key.code {
-            Esc | Char('q') | Char('m') => {
+            Esc | Char('m') => {
                 self.view = self.previous_view.clone();
             }
             Up | Char('k') => {
@@ -403,7 +453,17 @@ impl App {
                 self.view = self.previous_view.clone();
                 self.schedule_refresh();
             }
-            Esc | Char('q') => {
+            Esc => {
+                self.view = self.previous_view.clone();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_help(&mut self, key: crossterm::event::KeyEvent) {
+        use KeyCode::*;
+        match key.code {
+            Esc | Char('?') | Enter => {
                 self.view = self.previous_view.clone();
             }
             _ => {}
@@ -413,7 +473,12 @@ impl App {
     fn on_key_detail(&mut self, key: crossterm::event::KeyEvent) {
         use KeyCode::*;
         match key.code {
-            Esc | Char('q') => {
+            Esc => {
+                if self.view == View::SqsDetail {
+                    self.active_sqs_queue_url = None;
+                    self.queue_insights = None;
+                    self.queue_cloudwatch_metrics = None;
+                }
                 self.view = match self.view {
                     View::SqsDetail => View::SqsList,
                     View::SnsDetail => View::SnsList,
@@ -448,6 +513,19 @@ impl App {
             Char('?') => {
                 self.previous_view = self.view.clone();
                 self.view = View::Help;
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_quit_confirm(&mut self, key: crossterm::event::KeyEvent) {
+        use KeyCode::*;
+        match key.code {
+            Enter | Char('y') | Char('Y') => {
+                self.should_quit = true;
+            }
+            Esc | Char('n') | Char('N') => {
+                self.cancel_quit_confirm();
             }
             _ => {}
         }
@@ -489,27 +567,98 @@ impl App {
         self.debounce_ticks = DEBOUNCE_TICKS;
     }
 
+    fn start_requests(&mut self, count: usize) {
+        self.pending_requests += count;
+        self.loading = self.pending_requests > 0;
+    }
+
+    fn finish_request(&mut self) {
+        self.pending_requests = self.pending_requests.saturating_sub(1);
+        self.loading = self.pending_requests > 0;
+    }
+
+    fn set_status(&mut self, level: StatusLevel, text: impl Into<String>) {
+        self.status = Some(StatusMessage {
+            level,
+            text: text.into(),
+        });
+    }
+
+    fn open_quit_confirm(&mut self) {
+        if self.view != View::QuitConfirm {
+            self.quit_return_view = Some(self.view.clone());
+            self.view = View::QuitConfirm;
+        }
+    }
+
+    fn cancel_quit_confirm(&mut self) {
+        self.view = self.quit_return_view.take().unwrap_or(View::SqsList);
+    }
+
+    fn clamp_cursor_for_view(&mut self, view: View) {
+        let len = match view {
+            View::SqsList => self.filtered_queues().len(),
+            View::SnsList => self.filtered_topics().len(),
+            _ => 0,
+        };
+
+        self.list_cursor = if len == 0 {
+            0
+        } else {
+            self.list_cursor.min(len - 1)
+        };
+    }
+
+    fn refresh_queue_insights(&mut self) {
+        let Some(detail) = self.queue_detail.as_ref() else {
+            self.queue_insights = Some(QueueInsightsState::Loading);
+            return;
+        };
+
+        self.queue_insights = match self.queue_cloudwatch_metrics.as_ref() {
+            Some(Ok(metrics)) => Some(QueueInsightsState::Ready(compute_queue_insights(
+                detail,
+                Some(metrics),
+            ))),
+            Some(Err(_)) => Some(QueueInsightsState::Ready(compute_queue_insights(
+                detail, None,
+            ))),
+            None => Some(QueueInsightsState::Loading),
+        };
+    }
+
     fn open_detail(&mut self) {
         match self.view {
             View::SqsList => {
                 let queues = self.filtered_queues();
-                if queues.is_empty() {
+                let Some(queue) = queues.get(self.list_cursor) else {
                     return;
-                }
-                let url = queues[self.list_cursor].url.clone();
+                };
+                let url = queue.url.clone();
                 self.view = View::SqsDetail;
                 self.detail_scroll = 0;
-                self.loading = true;
+                self.sub_scroll = 0;
+                self.detail_on_subs = false;
+                self.status = None;
+                self.active_sqs_queue_url = Some(url.clone());
+                self.queue_detail = None;
+                self.queue_insights = Some(QueueInsightsState::Loading);
+                self.queue_cloudwatch_metrics = None;
+                self.start_requests(2);
                 let tx = self.event_tx.clone();
                 let profile = self.current_profile().to_string();
                 let region = self.current_region().to_string();
+                let detail_url = url.clone();
                 tokio::spawn(async move {
                     match load_sdk_config(&profile, &region).await {
                         Ok(cfg) => {
                             let svc = SqsService::new(&cfg);
-                            match svc.get_queue_detail(&url).await {
+                            match svc.get_queue_detail(&detail_url).await {
                                 Ok(detail) => {
-                                    let _ = tx.send(AppEvent::SqsDetailLoaded(detail));
+                                    let _ = tx.send(AppEvent::SqsDetailLoaded {
+                                        queue_url: detail_url,
+                                        detail,
+                                    });
                                 }
                                 Err(e) => {
                                     let _ = tx.send(AppEvent::Error(e.to_string()));
@@ -521,16 +670,46 @@ impl App {
                         }
                     }
                 });
+                let tx = self.event_tx.clone();
+                let profile = self.current_profile().to_string();
+                let region = self.current_region().to_string();
+                tokio::spawn(async move {
+                    match load_sdk_config(&profile, &region).await {
+                        Ok(cfg) => {
+                            let svc = CloudWatchService::new(&cfg);
+                            let result = svc
+                                .get_sqs_queue_metrics(&url)
+                                .await
+                                .map_err(|e| e.to_string());
+                            let _ = tx.send(AppEvent::SqsCloudWatchLoaded {
+                                queue_url: url,
+                                result,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::SqsCloudWatchLoaded {
+                                queue_url: url,
+                                result: Err(e.to_string()),
+                            });
+                        }
+                    }
+                });
             }
             View::SnsList => {
                 let topics = self.filtered_topics();
-                if topics.is_empty() {
+                let Some(topic) = topics.get(self.list_cursor) else {
                     return;
-                }
-                let arn = topics[self.list_cursor].arn.clone();
+                };
+                let arn = topic.arn.clone();
                 self.view = View::SnsDetail;
                 self.detail_scroll = 0;
-                self.loading = true;
+                self.sub_scroll = 0;
+                self.detail_on_subs = false;
+                self.active_sqs_queue_url = None;
+                self.queue_insights = None;
+                self.queue_cloudwatch_metrics = None;
+                self.topic_detail = None;
+                self.start_requests(1);
                 let tx = self.event_tx.clone();
                 let profile = self.current_profile().to_string();
                 let region = self.current_region().to_string();
@@ -559,8 +738,8 @@ impl App {
 
     /// Spawns async tasks to reload SQS queues and SNS topics.
     pub fn trigger_refresh(&mut self) {
-        self.loading = true;
         self.status = None;
+        self.start_requests(3);
         let tx = self.event_tx.clone();
         let profile = self.current_profile().to_string();
         let region = self.current_region().to_string();
@@ -664,43 +843,203 @@ pub async fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> 
         match event {
             AppEvent::Key(key) => {
                 use KeyCode::*;
-                // Ctrl+C always quits; 'q' only quits outside search mode.
+                // Ctrl+C always quits immediately.
                 let force_quit =
                     key.code == Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-                let soft_quit = !app.search_active && key.code == Char('q');
-                if force_quit || soft_quit {
+                if force_quit {
                     break;
                 }
                 app.on_key(key);
+                if app.should_quit {
+                    break;
+                }
             }
             AppEvent::Tick => {
                 app.on_tick();
             }
             AppEvent::SqsLoaded(queues) => {
                 app.queues = queues;
-                app.loading = false;
+                if matches!(app.view, View::SqsList | View::SqsDetail) {
+                    app.clamp_cursor_for_view(View::SqsList);
+                }
+                app.finish_request();
             }
             AppEvent::SnsLoaded(topics) => {
                 app.topics = topics;
-                app.loading = false;
+                if matches!(app.view, View::SnsList | View::SnsDetail) {
+                    app.clamp_cursor_for_view(View::SnsList);
+                }
+                app.finish_request();
             }
-            AppEvent::SqsDetailLoaded(detail) => {
-                app.queue_detail = Some(detail);
-                app.loading = false;
+            AppEvent::SqsDetailLoaded { queue_url, detail } => {
+                if app.active_sqs_queue_url.as_deref() == Some(queue_url.as_str()) {
+                    app.queue_detail = Some(detail);
+                    app.refresh_queue_insights();
+                }
+                app.finish_request();
+            }
+            AppEvent::SqsCloudWatchLoaded { queue_url, result } => {
+                if app.active_sqs_queue_url.as_deref() == Some(queue_url.as_str()) {
+                    let warning = result.as_ref().err().cloned();
+                    app.queue_cloudwatch_metrics = Some(result);
+                    app.refresh_queue_insights();
+                    if let Some(message) = warning {
+                        app.set_status(
+                            StatusLevel::Error,
+                            format!("SQS insights unavailable: {message}"),
+                        );
+                    }
+                }
+                app.finish_request();
             }
             AppEvent::SnsDetailLoaded(detail) => {
                 app.topic_detail = Some(detail);
-                app.loading = false;
+                app.finish_request();
             }
             AppEvent::SqsSnsMapLoaded(map) => {
                 app.sqs_sns_map = map;
+                app.finish_request();
             }
             AppEvent::Error(msg) => {
-                app.loading = false;
-                app.status = Some(msg);
+                app.finish_request();
+                app.set_status(StatusLevel::Error, msg);
             }
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app_for_test() -> App {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        App::new(vec!["default".to_string()], tx)
+    }
+
+    #[test]
+    fn command_r_is_manual_refresh_shortcut() {
+        assert!(is_manual_refresh_key(KeyEvent::new(
+            KeyCode::Char('r'),
+            KeyModifiers::SUPER,
+        )));
+        assert!(is_manual_refresh_key(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::SUPER | KeyModifiers::SHIFT,
+        )));
+    }
+
+    #[test]
+    fn f5_is_not_manual_refresh_shortcut() {
+        assert!(!is_manual_refresh_key(KeyEvent::new(
+            KeyCode::F(5),
+            KeyModifiers::NONE,
+        )));
+    }
+
+    #[test]
+    fn plain_r_is_not_manual_refresh_shortcut() {
+        assert!(!is_manual_refresh_key(KeyEvent::new(
+            KeyCode::Char('r'),
+            KeyModifiers::NONE,
+        )));
+    }
+
+    #[test]
+    fn command_r_with_extra_modifiers_is_not_manual_refresh_shortcut() {
+        assert!(!is_manual_refresh_key(KeyEvent::new(
+            KeyCode::Char('r'),
+            KeyModifiers::SUPER | KeyModifiers::CONTROL,
+        )));
+    }
+
+    #[test]
+    fn esc_clears_applied_search_filter_in_list_view() {
+        let mut app = app_for_test();
+        app.search_query = "*-dlq".to_string();
+        app.view = View::SqsList;
+
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert!(app.search_query.is_empty());
+        assert_eq!(app.list_cursor, 0);
+    }
+
+    #[test]
+    fn q_opens_quit_confirm_from_list_view() {
+        let mut app = app_for_test();
+        app.view = View::SqsList;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert_eq!(app.view, View::QuitConfirm);
+        assert_eq!(app.quit_return_view, Some(View::SqsList));
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn q_in_search_mode_is_literal_input_not_quit_modal() {
+        let mut app = app_for_test();
+        app.view = View::SqsList;
+        app.search_active = true;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+
+        assert_eq!(app.view, View::SqsList);
+        assert_eq!(app.search_query, "q");
+    }
+
+    #[test]
+    fn search_mode_accepts_star_literal_input() {
+        let mut app = app_for_test();
+        app.view = View::SqsList;
+        app.search_active = true;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('*'), KeyModifiers::NONE));
+
+        assert_eq!(app.search_query, "*");
+        assert_eq!(app.list_cursor, 0);
+    }
+
+    #[test]
+    fn search_mode_accepts_question_mark_literal_input() {
+        let mut app = app_for_test();
+        app.view = View::SqsList;
+        app.search_active = true;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+
+        assert_eq!(app.search_query, "?");
+        assert_eq!(app.list_cursor, 0);
+    }
+
+    #[test]
+    fn canceling_quit_confirm_restores_originating_view() {
+        let mut app = app_for_test();
+        app.view = View::ProfilePicker;
+        app.previous_view = View::SnsList;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+
+        assert_eq!(app.view, View::ProfilePicker);
+        assert_eq!(app.previous_view, View::SnsList);
+        assert_eq!(app.quit_return_view, None);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn confirming_quit_sets_should_quit() {
+        let mut app = app_for_test();
+        app.view = View::SqsDetail;
+
+        app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(app.view, View::QuitConfirm);
+        assert!(app.should_quit);
+    }
 }
