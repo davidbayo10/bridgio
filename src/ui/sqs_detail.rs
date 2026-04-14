@@ -200,10 +200,10 @@ fn render_insights(frame: &mut Frame, area: Rect, app: &App, border_style: Style
 
     let rows = match app.queue_insights.as_ref() {
         Some(QueueInsightsState::Ready(insights)) => vec![
-            insight_row("Drain Outlook", &insights.drain_outlook),
+            insight_row("Backlog Trend", &insights.drain_outlook),
             insight_row("Time To Empty", &insights.time_to_empty),
             insight_row("Completion", &insights.completion_pressure),
-            insight_row("Oldest Risk", &insights.oldest_message_risk),
+            insight_row("Oldest Message", &insights.oldest_message_risk),
             insight_row("Pressure", &insights.processing_pressure),
         ],
         _ => vec![Row::new([
@@ -226,7 +226,7 @@ fn render_insights(frame: &mut Frame, area: Rect, app: &App, border_style: Style
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Queue Insights — last 1h ")
+            .title(" Queue Signals — last 1h ")
             .border_style(border_style),
     );
 

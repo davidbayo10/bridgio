@@ -380,7 +380,8 @@ pub fn compute_queue_insights(
         )
     };
 
-    let oldest_message_risk = compute_oldest_message_risk(metrics.oldest_message_age_secs, retention_secs);
+    let oldest_message_risk =
+        compute_oldest_message_risk(metrics.oldest_message_age_secs, retention_secs);
 
     QueueInsights {
         drain_outlook,
@@ -407,7 +408,10 @@ fn completion_insight(
     );
 
     if empty_receives > 0.0 {
-        detail.push_str(&format!(" · empty receives {}", format_count(empty_receives)));
+        detail.push_str(&format!(
+            " · empty receives {}",
+            format_count(empty_receives)
+        ));
     }
 
     insight(severity, detail)
@@ -423,14 +427,11 @@ fn compute_processing_pressure(in_flight: u64, total_backlog: u64) -> QueueInsig
 
     let ratio = in_flight as f64 / total_backlog as f64;
     let (severity, message) = if ratio > 0.9 {
-        InsightSeverity::Critical
-            .with_message("Nearly all backlog is stuck in-flight")
+        InsightSeverity::Critical.with_message("Nearly all backlog is stuck in-flight")
     } else if ratio >= 0.7 {
-        InsightSeverity::Warning
-            .with_message("A large share of backlog is already in-flight")
+        InsightSeverity::Warning.with_message("A large share of backlog is already in-flight")
     } else {
-        InsightSeverity::Normal
-            .with_message("Most backlog is still available to process")
+        InsightSeverity::Normal.with_message("Most backlog is still available to process")
     };
 
     insight(
@@ -826,7 +827,12 @@ mod tests {
         let insights = compute_queue_insights(&detail, Some(&metrics));
 
         assert_eq!(insights.oldest_message_risk.state, "Critical");
-        assert!(insights.oldest_message_risk.detail.contains("Messages are aging too long"));
+        assert!(
+            insights
+                .oldest_message_risk
+                .detail
+                .contains("Messages are aging too long")
+        );
     }
 
     #[test]
