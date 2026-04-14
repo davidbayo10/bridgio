@@ -67,7 +67,7 @@ pub struct QueueInsights {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueInsightsState {
     Loading,
-    Ready(QueueInsights),
+    Ready(Box<QueueInsights>),
 }
 
 /// Summary of a single SNS topic shown in the list view.

@@ -616,13 +616,13 @@ impl App {
         };
 
         self.queue_insights = match self.queue_cloudwatch_metrics.as_ref() {
-            Some(Ok(metrics)) => Some(QueueInsightsState::Ready(compute_queue_insights(
+            Some(Ok(metrics)) => Some(QueueInsightsState::Ready(Box::new(compute_queue_insights(
                 detail,
                 Some(metrics),
-            ))),
-            Some(Err(_)) => Some(QueueInsightsState::Ready(compute_queue_insights(
+            )))),
+            Some(Err(_)) => Some(QueueInsightsState::Ready(Box::new(compute_queue_insights(
                 detail, None,
-            ))),
+            )))),
             None => Some(QueueInsightsState::Loading),
         };
     }
