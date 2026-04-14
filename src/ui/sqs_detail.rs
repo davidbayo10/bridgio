@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::models::{InsightSeverity, QueueInsight, QueueInsightsState};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let Some(detail) = &app.queue_detail else {
@@ -13,7 +14,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" SQS Queue Detail — Loading… ")
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::Gray)),
         );
         frame.render_widget(placeholder, area);
         return;
@@ -39,15 +40,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Border colours: cyan = focused panel, dark gray = unfocused.
     let attr_border = if app.detail_on_subs {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     } else {
         Style::default().fg(Color::Cyan)
     };
     let sub_border = if app.detail_on_subs {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     };
+
+    let top_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .split(chunks[0]);
+
+    render_insights(frame, top_chunks[0], app, attr_border);
 
     // ── Attributes ────────────────────────────────────────────────────────────
     let attr_header = Row::new([
@@ -99,7 +107,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .border_style(attr_border),
     );
 
-    frame.render_widget(attr_table, chunks[0]);
+    frame.render_widget(attr_table, top_chunks[1]);
 
     // ── SNS Subscriptions ────────────────────────────────────────────────────
     let sub_header = Row::new([
@@ -129,12 +137,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .map(|s| {
             let fp_cell = match s.filter_policy.as_deref() {
                 Some(fp) => Cell::from(fp.to_string()).style(Style::default().fg(Color::Yellow)),
-                None => Cell::from("none").style(Style::default().fg(Color::DarkGray)),
+                None => Cell::from("none").style(Style::default().fg(Color::Gray)),
             };
             Row::new([
                 Cell::from(s.topic_name.clone()).style(Style::default().fg(Color::White)),
                 fp_cell,
-                Cell::from(s.subscription_arn.clone()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(s.subscription_arn.clone()).style(Style::default().fg(Color::Gray)),
             ])
         })
         .collect();
@@ -167,4 +175,78 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     frame.render_widget(sub_table, chunks[1]);
+}
+
+fn render_insights(frame: &mut Frame, area: Rect, app: &App, border_style: Style) {
+    let header = Row::new([
+        Cell::from("Signal").style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("State").style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from("Detail").style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+    .height(1)
+    .bottom_margin(1);
+
+    let rows = match app.queue_insights.as_ref() {
+        Some(QueueInsightsState::Ready(insights)) => vec![
+            insight_row("Drain Outlook", &insights.drain_outlook),
+            insight_row("Time To Empty", &insights.time_to_empty),
+            insight_row("Completion", &insights.completion_pressure),
+            insight_row("Oldest Risk", &insights.oldest_message_risk),
+            insight_row("Pressure", &insights.processing_pressure),
+        ],
+        _ => vec![Row::new([
+            Cell::from("Loading insights").style(Style::default().fg(Color::Yellow)),
+            Cell::from("Loading").style(Style::default().fg(Color::Yellow)),
+            Cell::from("waiting for SQS detail and CloudWatch metrics")
+                .style(Style::default().fg(Color::Gray)),
+        ])],
+    };
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(18),
+            Constraint::Percentage(18),
+            Constraint::Percentage(64),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Queue Insights — last 1h ")
+            .border_style(border_style),
+    );
+
+    frame.render_widget(table, area);
+}
+
+fn insight_row(label: &str, insight: &QueueInsight) -> Row<'static> {
+    Row::new([
+        Cell::from(label.to_string()).style(Style::default().fg(Color::White)),
+        Cell::from(insight.state.clone())
+            .style(Style::default().fg(severity_color(insight.severity))),
+        Cell::from(insight.detail.clone()).style(Style::default().fg(Color::Gray)),
+    ])
+}
+
+fn severity_color(severity: InsightSeverity) -> Color {
+    match severity {
+        InsightSeverity::Normal => Color::Green,
+        InsightSeverity::Warning => Color::Yellow,
+        InsightSeverity::Critical => Color::Red,
+        InsightSeverity::Unavailable => Color::Gray,
+    }
 }
