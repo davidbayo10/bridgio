@@ -13,7 +13,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" SNS Topic Detail — Loading… ")
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::Gray)),
         );
         frame.render_widget(placeholder, area);
         return;
@@ -27,14 +27,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     // Border colours: cyan = focused panel, dark gray = unfocused.
     let attr_border = if app.detail_on_subs {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     } else {
         Style::default().fg(Color::Cyan)
     };
     let sub_border = if app.detail_on_subs {
         Style::default().fg(Color::Cyan)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     };
 
     // ---- Attributes table ----
@@ -119,7 +119,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Row::new([
                 Cell::from(s.protocol.clone()).style(Style::default().fg(Color::Yellow)),
                 Cell::from(s.endpoint.clone()),
-                Cell::from(s.arn.clone()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(s.arn.clone()).style(Style::default().fg(Color::Gray)),
             ])
         })
         .collect();

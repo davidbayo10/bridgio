@@ -28,10 +28,11 @@ cargo build --release
 - Browse SQS queues with message counts (visible, in-flight, delayed)
 - Browse SNS topics with subscription counts
 - Detailed attribute views for individual queues and topics
+- SQS queue insights with CloudWatch-backed drain, ETA, age, and pressure signals
 - SNS → SQS subscription exploration with filter policies
 - Visual dependency map showing topic-to-queue edges (ASCII tree)
 - Multi-profile and multi-region support (16 AWS regions)
-- Search and filter by name, sort by name or message count
+- Search and filter by name with friendly wildcards (`*-dlq`, `prod-*`, `queue-??`) and combined terms (`prod *-dlq`), sort by name or message count
 - Multi-select resources for dependency analysis
 - Copy context to clipboard in markdown format
 - Profile and region persistence across sessions
@@ -40,6 +41,26 @@ cargo build --release
 
 - Rust 2024 edition
 - AWS credentials configured in `~/.aws/config` and/or `~/.aws/credentials`
+
+## AWS Permissions
+
+To use the application fully, the active AWS identity needs read-only access to SQS, SNS, and CloudWatch in the selected account and region.
+
+Minimum permissions for the existing browse/detail flows:
+
+- `sqs:ListQueues`
+- `sqs:GetQueueAttributes`
+- `sns:ListTopics`
+- `sns:GetTopicAttributes`
+- `sns:ListSubscriptions`
+- `sns:ListSubscriptionsByTopic`
+- `sns:GetSubscriptionAttributes`
+
+Additional permission for the SQS insight block in queue detail:
+
+- `cloudwatch:GetMetricData`
+
+If `cloudwatch:GetMetricData` is missing, the queue detail still opens and raw SQS attributes still work, but the insights block will show partial/unavailable values and the status bar will display a warning.
 
 ## Build & Run
 
@@ -54,7 +75,8 @@ cargo build --release
 
 | Key | Action |
 |-----|--------|
-| `q` / `Ctrl+C` | Quit |
+| `q` | Open quit confirmation |
+| `Ctrl+C` | Quit immediately |
 | `1` | Switch to SQS list |
 | `2` | Switch to SNS list |
 | `?` | Toggle help |
@@ -70,7 +92,7 @@ cargo build --release
 | `↑` / `k` | Cursor up |
 | `↓` / `j` | Cursor down |
 | `Enter` | Open detail view |
-| `/` | Start search (filter by name) |
+| `/` | Start search (filter by name, supports `*` and `?`) |
 | `s` | Cycle sort: Name → Messages ↓ → Messages ↑ (SQS only) |
 | `Space` | Toggle selection |
 | `m` | Open dependency map (requires selections) |
@@ -83,7 +105,7 @@ cargo build --release
 | `Tab` | Switch focus between panels |
 | `↑` / `k` | Scroll up |
 | `↓` / `j` | Scroll down |
-| `Esc` | Back to list |
+| `Esc` | Back / cancel / close modal |
 
 ### Search mode
 

@@ -119,23 +119,20 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::White)
         };
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("{topic_marker} "),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(format!("{topic_marker} "), Style::default().fg(Color::Gray)),
             Span::styled(topic_name.clone(), topic_style),
             Span::styled(
                 format!("  [{}]", topic_arn),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Gray),
             ),
         ]));
 
         if queue_arns.is_empty() {
             lines.push(Line::from(vec![
-                Span::styled("       └── ", Style::default().fg(Color::DarkGray)),
+                Span::styled("       └── ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     "(no subscribing queues in selection)",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Gray),
                 ),
             ]));
         } else {
@@ -159,13 +156,10 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
                 lines.push(Line::from(vec![
                     Span::styled(
                         format!("       {connector} {q_marker} "),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
                     ),
                     Span::styled(q_name, q_style),
-                    Span::styled(
-                        format!("  [{}]", q_arn),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!("  [{}]", q_arn), Style::default().fg(Color::Gray)),
                 ]));
 
                 // Filter policy for this specific topic→queue edge.
@@ -194,11 +188,11 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
                         lines.push(Line::from(vec![
                             Span::styled(
                                 format!("{indent}⌬ filter: "),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(Color::Gray),
                             ),
                             Span::styled(
                                 "none (receives all messages)",
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(Color::Gray),
                             ),
                         ]));
                     }
@@ -222,22 +216,19 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
     if !orphan_queues.is_empty() {
         lines.push(Line::from(Span::styled(
             "  SQS queues with no SNS subscriptions:",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Gray),
         )));
         for q_arn in orphan_queues {
             let q_name = name_from_arn(q_arn);
             lines.push(Line::from(vec![
-                Span::styled("  ★ SQS ", Style::default().fg(Color::DarkGray)),
+                Span::styled("  ★ SQS ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     q_name,
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("  [{}]", q_arn),
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Span::styled(format!("  [{}]", q_arn), Style::default().fg(Color::Gray)),
             ]));
         }
         lines.push(Line::from(""));
@@ -273,7 +264,7 @@ fn render_hint(frame: &mut Frame, area: Rect) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(Color::Gray)),
     );
     frame.render_widget(para, area);
 }

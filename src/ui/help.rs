@@ -7,19 +7,20 @@ use ratatui::{
 };
 
 const HELP_TEXT: &[(&str, &str)] = &[
-    ("q / Ctrl+C", "Quit"),
+    ("q", "Open quit confirmation"),
+    ("Ctrl+C", "Quit immediately"),
     ("1", "Switch to SQS view"),
     ("2", "Switch to SNS view"),
     ("↑ / k", "Move cursor up"),
     ("↓ / j", "Move cursor down"),
     ("Enter", "Open detail view"),
-    ("Esc", "Back to list / cancel search"),
+    ("Esc", "Back / cancel / close modal"),
     ("Space", "Select / deselect item in list"),
     ("m", "Open dependency map  (when items selected)"),
     ("x", "Clear all selections  (in dep. map)"),
     ("p / r", "Open profile / region picker"),
-    ("F5", "Refresh now"),
-    ("/", "Search (filter by name)"),
+    ("Cmd+R", "Refresh now"),
+    ("/", "Search by name  (* and ? supported)"),
     ("s", "Cycle sort: name → ↓msgs → ↑msgs  (SQS)"),
     ("Tab", "Switch focus between panels  (SQS detail)"),
     ("?", "Toggle this help"),
@@ -51,7 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Keybindings — press any key to close ")
+                .title(" Keybindings — Esc / ? to close ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(Color::Cyan)),
         )

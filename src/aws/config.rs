@@ -22,14 +22,14 @@ fn parse_profile_names(content: &str) -> Vec<String> {
             let line = line.trim();
             if line.starts_with('[') && line.ends_with(']') {
                 let inner = &line[1..line.len() - 1];
-                // ~/.aws/config uses "[profile name]", credentials uses "[name]"
-                let name = if let Some(stripped) = inner.strip_prefix("profile ") {
-                    stripped
-                } else {
-                    inner
-                };
-                if !name.is_empty() {
-                    return Some(name.to_string());
+                // ~/.aws/config uses "[profile name]", credentials uses "[name]".
+                // Ignore other config sections like [sso-session x] and [services y].
+                if let Some(stripped) = inner.strip_prefix("profile ") {
+                    if !stripped.is_empty() {
+                        return Some(stripped.to_string());
+                    }
+                } else if !inner.contains(' ') && !inner.is_empty() {
+                    return Some(inner.to_string());
                 }
             }
             None

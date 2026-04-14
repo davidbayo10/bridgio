@@ -13,7 +13,7 @@ pub fn build(app: &App) -> Option<String> {
         View::SnsDetail => context_sns_detail(app),
         View::DependencyMap => Some(context_dep_map(app)),
         // Pickers / Help have no meaningful exportable context.
-        View::ProfilePicker | View::RegionPicker | View::Help => None,
+        View::ProfilePicker | View::RegionPicker | View::Help | View::QuitConfirm => None,
     }
 }
 

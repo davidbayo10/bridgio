@@ -69,7 +69,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
 
     // While loading and no stale data to show yet, render skeleton rows.
     let rows: Vec<Row> = if app.loading && app.queues.is_empty() {
-        let ghost = Style::default().fg(Color::DarkGray);
+        let ghost = Style::default().fg(Color::Gray);
         // Skeleton widths cycle to look like different-length content.
         let skeletons = [
             (
@@ -144,14 +144,14 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                 let sns_style = if sns_count > 0 {
                     Style::default().fg(Color::Cyan)
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(Color::Gray)
                 };
 
                 let name_cell = if selected {
                     Cell::from(format!("● {}", q.name)).style(
                         Style::default()
                             .fg(Color::Black)
-                            .bg(Color::Green)
+                            .bg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
@@ -159,7 +159,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                 };
 
                 let base_style = if selected {
-                    Style::default().fg(Color::Black).bg(Color::Green)
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
                 } else {
                     Style::default()
                 };
@@ -182,7 +182,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                         if selected {
                             base_style
                         } else {
-                            Style::default().fg(Color::DarkGray)
+                            Style::default().fg(Color::Gray)
                         },
                     ),
                 ])
@@ -227,11 +227,12 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                     queues.len(),
                     app.queues.len()
                 ))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::Gray)),
         )
         .row_highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
+                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -264,8 +265,9 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
         )
     } else {
         (
-            "  [ / ] search   [ s ] sort   [ Space ] select   [ F5 ] refresh".to_string(),
-            Style::default().fg(Color::DarkGray),
+            "  [ / ] search (* and ?)   [ s ] sort   [ Space ] select   [ Cmd+R ] refresh"
+                .to_string(),
+            Style::default().fg(Color::Gray),
         )
     };
 
