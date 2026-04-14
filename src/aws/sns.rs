@@ -8,6 +8,9 @@ use tokio::sync::Semaphore;
 
 use crate::models::{SqsSnsSubscription, SubscriptionInfo, TopicDetail, TopicInfo, name_from_arn};
 
+/// Maximum number of concurrent get_topic_attributes calls during list.
+const MAX_CONCURRENT_TOPIC_ATTRS: usize = 20;
+
 pub struct SnsService {
     client: Client,
 }
@@ -21,7 +24,7 @@ impl SnsService {
 
     /// Lists all topics with basic attributes. Paginates automatically.
     pub async fn list_topics(&self) -> Result<Vec<TopicInfo>> {
-        let mut topics: Vec<TopicInfo> = Vec::new();
+        let mut arns: Vec<String> = Vec::new();
         let mut next_token: Option<String> = None;
 
         loop {
@@ -35,35 +38,55 @@ impl SnsService {
                 .await
                 .map_err(|e| anyhow!("list_topics failed: {e}"))?;
 
-            for topic in output.topics() {
-                let arn = topic.topic_arn().unwrap_or_default().to_string();
+            arns.extend(
+                output
+                    .topics()
+                    .iter()
+                    .filter_map(|topic| topic.topic_arn())
+                    .map(str::to_string),
+            );
 
-                // Fetch topic attributes to get subscription count.
-                let attr_output = self
-                    .client
+            next_token = output.next_token().map(str::to_string);
+            if next_token.is_none() {
+                break;
+            }
+        }
+
+        let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_TOPIC_ATTRS));
+        let mut set: tokio::task::JoinSet<Result<TopicInfo>> = tokio::task::JoinSet::new();
+
+        for arn in arns {
+            let client = self.client.clone();
+            let sem = Arc::clone(&sem);
+            set.spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let attr_output = client
                     .get_topic_attributes()
                     .topic_arn(&arn)
                     .send()
                     .await
                     .map_err(|e| anyhow!("get_topic_attributes failed: {e}"))?;
 
-                // attributes() returns Option<&HashMap<String,String>> in SDK v1.
                 let subscriptions_confirmed = attr_output
                     .attributes()
                     .and_then(|m| m.get("SubscriptionsConfirmed"))
                     .and_then(|v: &String| v.parse().ok())
                     .unwrap_or(0u64);
 
-                topics.push(TopicInfo {
+                Ok(TopicInfo {
                     name: name_from_arn(&arn),
                     arn,
                     subscriptions_confirmed,
-                });
-            }
+                })
+            });
+        }
 
-            next_token = output.next_token().map(str::to_string);
-            if next_token.is_none() {
-                break;
+        let mut topics: Vec<TopicInfo> = Vec::new();
+        while let Some(res) = set.join_next().await {
+            match res {
+                Ok(Ok(topic)) => topics.push(topic),
+                Ok(Err(e)) => return Err(e),
+                Err(e) => return Err(anyhow!("topic attribute task panicked: {e}")),
             }
         }
 
