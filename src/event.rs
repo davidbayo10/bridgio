@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::models::{QueueDetail, QueueInfo, SqsSnsSubscription, TopicDetail, TopicInfo};
+use crate::models::{
+    QueueCloudWatchMetrics, QueueDetail, QueueInfo, SqsSnsSubscription, TopicDetail, TopicInfo,
+};
 
 /// All events that flow into the main application loop.
 #[derive(Debug)]
@@ -17,7 +19,15 @@ pub enum AppEvent {
     /// SNS topic list loaded successfully.
     SnsLoaded(Vec<TopicInfo>),
     /// SQS queue detail loaded successfully.
-    SqsDetailLoaded(QueueDetail),
+    SqsDetailLoaded {
+        queue_url: String,
+        detail: QueueDetail,
+    },
+    /// SQS CloudWatch metrics loaded successfully or failed gracefully.
+    SqsCloudWatchLoaded {
+        queue_url: String,
+        result: Result<QueueCloudWatchMetrics, String>,
+    },
     /// SNS topic detail loaded successfully.
     SnsDetailLoaded(TopicDetail),
     /// SNS→SQS subscription map loaded (keyed by queue ARN).
