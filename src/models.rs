@@ -267,144 +267,120 @@ pub fn compute_queue_insights(
     let deleted = metrics.messages_deleted.max(0.0);
     let tolerance = comparison_tolerance(sent.max(received).max(deleted));
 
-    let drain_outlook = if (deleted - sent).abs() <= tolerance {
-        QueueInsight {
-            state: "Stable".to_string(),
-            detail: format!(
-                "sent {} / deleted {} in last {}",
+    let drain_delta = deleted - sent;
+    let drain_outlook = if drain_delta > tolerance {
+        insight(
+            InsightSeverity::Normal,
+            format!(
+                "Backlog is shrinking · sent {} / deleted {} in last {}",
                 format_count(sent),
                 format_count(deleted),
                 format_window(metrics.window_secs)
             ),
-            severity: InsightSeverity::Normal,
-        }
-    } else if deleted > sent {
-        QueueInsight {
-            state: "Draining".to_string(),
-            detail: format!(
-                "delete pace exceeds incoming traffic by {}/{}",
-                format_count(deleted - sent),
+        )
+    } else if drain_delta < -tolerance {
+        insight(
+            InsightSeverity::Critical,
+            format!(
+                "Backlog is growing · sent {} / deleted {} in last {}",
+                format_count(sent),
+                format_count(deleted),
                 format_window(metrics.window_secs)
             ),
-            severity: InsightSeverity::Normal,
-        }
+        )
     } else {
-        QueueInsight {
-            state: "Growing".to_string(),
-            detail: format!(
-                "incoming traffic exceeds deletes by {}/{}",
-                format_count(sent - deleted),
+        insight(
+            InsightSeverity::Warning,
+            format!(
+                "Backlog is flat · sent {} / deleted {} in last {}",
+                format_count(sent),
+                format_count(deleted),
                 format_window(metrics.window_secs)
             ),
-            severity: InsightSeverity::Warning,
-        }
+        )
     };
 
-    let net_deleted = deleted - sent;
+    let net_deleted = drain_delta;
     let time_to_empty = if total_backlog == 0 {
-        QueueInsight {
-            state: "Empty".to_string(),
-            detail: "no visible, in-flight, or delayed backlog".to_string(),
-            severity: InsightSeverity::Normal,
-        }
-    } else if net_deleted <= tolerance {
-        QueueInsight {
-            state: "No convergence".to_string(),
-            detail: format!(
-                "backlog {} with net drain {}/{}",
+        insight(
+            InsightSeverity::Normal,
+            "Queue is empty · no current backlog".to_string(),
+        )
+    } else if net_deleted < -tolerance {
+        insight(
+            InsightSeverity::Critical,
+            format!(
+                "Backlog cannot clear at current pace · backlog {} / net drain {} in last {}",
                 total_backlog,
                 format_signed_count(net_deleted),
                 format_window(metrics.window_secs)
             ),
-            severity: if net_deleted < 0.0 {
-                InsightSeverity::Critical
-            } else {
-                InsightSeverity::Warning
-            },
-        }
+        )
+    } else if net_deleted <= tolerance {
+        insight(
+            InsightSeverity::Warning,
+            format!(
+                "Backlog is not shrinking meaningfully · backlog {} / net drain {} in last {}",
+                total_backlog,
+                format_signed_count(net_deleted),
+                format_window(metrics.window_secs)
+            ),
+        )
     } else {
         let net_deleted_per_hour = net_deleted / window_hours.max(1e-9);
         let eta_secs = total_backlog as f64 / net_deleted_per_hour * 3600.0;
-        let eta_severity = retention_secs
-            .filter(|retention| eta_secs > *retention as f64)
-            .map(|_| InsightSeverity::Warning)
-            .unwrap_or(InsightSeverity::Normal);
+        let mut eta_severity = if eta_secs > 2.0 * 3600.0 {
+            InsightSeverity::Critical
+        } else if eta_secs >= 30.0 * 60.0 {
+            InsightSeverity::Warning
+        } else {
+            InsightSeverity::Normal
+        };
+        if retention_secs.is_some_and(|retention| eta_secs > retention as f64) {
+            eta_severity = max_severity(eta_severity, InsightSeverity::Warning);
+        }
 
-        QueueInsight {
-            state: format_duration(eta_secs),
-            detail: format!(
-                "backlog {} / net drain {}/h",
+        insight(
+            eta_severity,
+            format!(
+                "Queue would clear in about {} · backlog {} / net drain {} per hour",
+                format_duration(eta_secs),
                 total_backlog,
                 format_count(net_deleted_per_hour)
             ),
-            severity: eta_severity,
-        }
+        )
     };
 
-    let completion_pressure = if (deleted - received).abs() <= tolerance {
-        QueueInsight {
-            state: "Balanced".to_string(),
-            detail: completion_detail(
-                received,
-                deleted,
-                metrics.empty_receives,
-                metrics.window_secs,
-            ),
-            severity: InsightSeverity::Normal,
-        }
-    } else if received > deleted {
-        QueueInsight {
-            state: "Lagging".to_string(),
-            detail: completion_detail(
-                received,
-                deleted,
-                metrics.empty_receives,
-                metrics.window_secs,
-            ),
-            severity: InsightSeverity::Warning,
-        }
+    let completion_pressure = if deleted - received > tolerance {
+        completion_insight(
+            InsightSeverity::Normal,
+            "Consumers are completing messages faster than they receive them",
+            received,
+            deleted,
+            metrics.empty_receives,
+            metrics.window_secs,
+        )
+    } else if received - deleted > tolerance {
+        completion_insight(
+            InsightSeverity::Critical,
+            "Consumers are falling behind on completions",
+            received,
+            deleted,
+            metrics.empty_receives,
+            metrics.window_secs,
+        )
     } else {
-        QueueInsight {
-            state: "Recovering".to_string(),
-            detail: completion_detail(
-                received,
-                deleted,
-                metrics.empty_receives,
-                metrics.window_secs,
-            ),
-            severity: InsightSeverity::Normal,
-        }
+        completion_insight(
+            InsightSeverity::Warning,
+            "Consumers are barely keeping up",
+            received,
+            deleted,
+            metrics.empty_receives,
+            metrics.window_secs,
+        )
     };
 
-    let oldest_message_risk = match (metrics.oldest_message_age_secs, retention_secs) {
-        (Some(age_secs), Some(retention_secs)) if retention_secs > 0 => {
-            let pressure = age_secs / retention_secs as f64;
-            let (state, severity) = if pressure >= 0.8 {
-                ("At risk", InsightSeverity::Critical)
-            } else if pressure >= 0.5 {
-                ("Watch", InsightSeverity::Warning)
-            } else {
-                ("Healthy", InsightSeverity::Normal)
-            };
-
-            QueueInsight {
-                state: state.to_string(),
-                detail: format!(
-                    "oldest {} ({:.0}% of retention {})",
-                    format_duration(age_secs),
-                    pressure * 100.0,
-                    format_duration(retention_secs as f64)
-                ),
-                severity,
-            }
-        }
-        (Some(age_secs), _) => QueueInsight {
-            state: "Observed".to_string(),
-            detail: format!("oldest message age {}", format_duration(age_secs)),
-            severity: InsightSeverity::Normal,
-        },
-        (None, _) => unavailable_insight("CloudWatch returned no oldest-message datapoint"),
-    };
+    let oldest_message_risk = compute_oldest_message_risk(metrics.oldest_message_age_secs, retention_secs);
 
     QueueInsights {
         drain_outlook,
@@ -415,53 +391,166 @@ pub fn compute_queue_insights(
     }
 }
 
-fn completion_detail(received: f64, deleted: f64, empty_receives: f64, window_secs: u64) -> String {
-    let empty_clause = if empty_receives > 0.0 {
-        format!(" / empty polls {}", format_count(empty_receives))
-    } else {
-        String::new()
-    };
-
-    format!(
-        "received {} / deleted {}{} in last {}",
+fn completion_insight(
+    severity: InsightSeverity,
+    message: &str,
+    received: f64,
+    deleted: f64,
+    empty_receives: f64,
+    window_secs: u64,
+) -> QueueInsight {
+    let mut detail = format!(
+        "{message} · received {} / deleted {} in last {}",
         format_count(received),
         format_count(deleted),
-        empty_clause,
         format_window(window_secs)
-    )
+    );
+
+    if empty_receives > 0.0 {
+        detail.push_str(&format!(" · empty receives {}", format_count(empty_receives)));
+    }
+
+    insight(severity, detail)
 }
 
 fn compute_processing_pressure(in_flight: u64, total_backlog: u64) -> QueueInsight {
     if total_backlog == 0 {
-        return QueueInsight {
-            state: "Idle".to_string(),
-            detail: "no current backlog".to_string(),
-            severity: InsightSeverity::Normal,
-        };
+        return insight(
+            InsightSeverity::Normal,
+            "No current pressure · no backlog".to_string(),
+        );
     }
 
     let ratio = in_flight as f64 / total_backlog as f64;
-    let severity = if ratio >= 0.95 {
+    let (severity, message) = if ratio > 0.9 {
         InsightSeverity::Critical
-    } else if ratio >= 0.85 {
+            .with_message("Nearly all backlog is stuck in-flight")
+    } else if ratio >= 0.7 {
         InsightSeverity::Warning
+            .with_message("A large share of backlog is already in-flight")
     } else {
         InsightSeverity::Normal
+            .with_message("Most backlog is still available to process")
     };
 
+    insight(
+        severity,
+        format!("{message} · {in_flight} in flight / {total_backlog} total"),
+    )
+}
+
+fn compute_oldest_message_risk(
+    oldest_age_secs: Option<f64>,
+    retention_secs: Option<u64>,
+) -> QueueInsight {
+    let Some(age_secs) = oldest_age_secs else {
+        return unavailable_insight("CloudWatch returned no oldest-message datapoint");
+    };
+
+    let absolute_severity = age_severity(age_secs);
+    let retention_severity = retention_secs
+        .filter(|retention| *retention > 0)
+        .map(|retention| retention_age_severity(age_secs, retention));
+    let severity = max_severity(
+        absolute_severity,
+        retention_severity.unwrap_or(InsightSeverity::Normal),
+    );
+
+    let message = match severity {
+        InsightSeverity::Normal => "Messages are fresh",
+        InsightSeverity::Warning => {
+            if retention_severity == Some(InsightSeverity::Warning)
+                && absolute_severity == InsightSeverity::Normal
+            {
+                "Messages are aging toward retention risk"
+            } else {
+                "Messages are aging longer than expected"
+            }
+        }
+        InsightSeverity::Critical => {
+            if retention_severity == Some(InsightSeverity::Critical)
+                && absolute_severity != InsightSeverity::Critical
+            {
+                "Messages are close to expiry risk"
+            } else {
+                "Messages are aging too long"
+            }
+        }
+        InsightSeverity::Unavailable => "Messages age is unavailable",
+    };
+
+    let mut detail = format!("{message} · oldest {}", format_duration(age_secs));
+
+    if let Some(retention) = retention_secs.filter(|retention| *retention > 0)
+        && retention_severity.unwrap_or(InsightSeverity::Normal) != InsightSeverity::Normal
+    {
+        detail.push_str(&format!(
+            " · {:.0}% of retention {}",
+            age_secs / retention as f64 * 100.0,
+            format_duration(retention as f64)
+        ));
+    }
+
+    insight(severity, detail)
+}
+
+fn insight(severity: InsightSeverity, detail: String) -> QueueInsight {
     QueueInsight {
-        state: format!("{:.0}% in flight", ratio * 100.0),
-        detail: format!("{in_flight} in flight / {total_backlog} total backlog"),
+        state: insight_state(severity).to_string(),
+        detail,
         severity,
     }
 }
 
-fn unavailable_insight(detail: &str) -> QueueInsight {
-    QueueInsight {
-        state: "Unavailable".to_string(),
-        detail: detail.to_string(),
-        severity: InsightSeverity::Unavailable,
+fn insight_state(severity: InsightSeverity) -> &'static str {
+    match severity {
+        InsightSeverity::Normal => "Healthy",
+        InsightSeverity::Warning => "Warning",
+        InsightSeverity::Critical => "Critical",
+        InsightSeverity::Unavailable => "Unavailable",
     }
+}
+
+fn age_severity(age_secs: f64) -> InsightSeverity {
+    if age_secs >= 3600.0 {
+        InsightSeverity::Critical
+    } else if age_secs >= 1800.0 {
+        InsightSeverity::Warning
+    } else {
+        InsightSeverity::Normal
+    }
+}
+
+fn retention_age_severity(age_secs: f64, retention_secs: u64) -> InsightSeverity {
+    let ratio = age_secs / retention_secs as f64;
+    if ratio >= 0.8 {
+        InsightSeverity::Critical
+    } else if ratio >= 0.5 {
+        InsightSeverity::Warning
+    } else {
+        InsightSeverity::Normal
+    }
+}
+
+fn max_severity(left: InsightSeverity, right: InsightSeverity) -> InsightSeverity {
+    if severity_rank(left) >= severity_rank(right) {
+        left
+    } else {
+        right
+    }
+}
+
+fn severity_rank(severity: InsightSeverity) -> u8 {
+    match severity {
+        InsightSeverity::Normal => 0,
+        InsightSeverity::Warning => 1,
+        InsightSeverity::Critical => 2,
+        InsightSeverity::Unavailable => 3,
+    }
+}
+
+fn unavailable_insight(detail: &str) -> QueueInsight {
+    insight(InsightSeverity::Unavailable, detail.to_string())
 }
 
 fn comparison_tolerance(scale: f64) -> f64 {
@@ -498,6 +587,16 @@ fn format_duration(total_secs: f64) -> String {
         format!("{minutes}m")
     } else {
         format!("{total_secs}s")
+    }
+}
+
+trait SeverityMessage {
+    fn with_message(self, message: &'static str) -> (InsightSeverity, &'static str);
+}
+
+impl SeverityMessage for InsightSeverity {
+    fn with_message(self, message: &'static str) -> (InsightSeverity, &'static str) {
+        (self, message)
     }
 }
 
@@ -601,9 +700,9 @@ mod tests {
 
         let insights = compute_queue_insights(&detail, Some(&metrics));
 
-        assert_eq!(insights.drain_outlook.state, "Growing");
-        assert_eq!(insights.time_to_empty.state, "No convergence");
-        assert_eq!(insights.completion_pressure.state, "Lagging");
+        assert_eq!(insights.drain_outlook.state, "Critical");
+        assert_eq!(insights.time_to_empty.state, "Critical");
+        assert_eq!(insights.completion_pressure.state, "Critical");
     }
 
     #[test]
@@ -635,9 +734,9 @@ mod tests {
 
         let insights = compute_queue_insights(&detail, Some(&metrics));
 
-        assert_eq!(insights.drain_outlook.state, "Draining");
-        assert_ne!(insights.time_to_empty.state, "No convergence");
-        assert_eq!(insights.completion_pressure.state, "Recovering");
+        assert_eq!(insights.drain_outlook.state, "Healthy");
+        assert_eq!(insights.time_to_empty.state, "Warning");
+        assert_eq!(insights.completion_pressure.state, "Healthy");
     }
 
     #[test]
@@ -669,8 +768,8 @@ mod tests {
 
         let insights = compute_queue_insights(&detail, Some(&metrics));
 
-        assert_eq!(insights.oldest_message_risk.state, "At risk");
-        assert_eq!(insights.processing_pressure.state, "Idle");
+        assert_eq!(insights.oldest_message_risk.state, "Critical");
+        assert_eq!(insights.processing_pressure.state, "Healthy");
     }
 
     #[test]
@@ -694,6 +793,72 @@ mod tests {
         let insights = compute_queue_insights(&detail, None);
 
         assert_eq!(insights.drain_outlook.state, "Unavailable");
-        assert_eq!(insights.processing_pressure.state, "45% in flight");
+        assert_eq!(insights.processing_pressure.state, "Healthy");
+    }
+
+    #[test]
+    fn queue_insights_flag_old_messages_even_with_long_retention() {
+        let detail = QueueDetail {
+            name: "orders".to_string(),
+            arn: "arn:aws:sqs:eu-west-1:123456789012:orders".to_string(),
+            attributes: vec![
+                ("ApproximateNumberOfMessages".to_string(), "15".to_string()),
+                (
+                    "ApproximateNumberOfMessagesNotVisible".to_string(),
+                    "3".to_string(),
+                ),
+                (
+                    "ApproximateNumberOfMessagesDelayed".to_string(),
+                    "0".to_string(),
+                ),
+                ("MessageRetentionPeriod".to_string(), "345600".to_string()),
+            ],
+        };
+        let metrics = QueueCloudWatchMetrics {
+            window_secs: 3600,
+            messages_sent: 80.0,
+            messages_received: 75.0,
+            messages_deleted: 120.0,
+            empty_receives: 0.0,
+            oldest_message_age_secs: Some(89.0 * 60.0),
+        };
+
+        let insights = compute_queue_insights(&detail, Some(&metrics));
+
+        assert_eq!(insights.oldest_message_risk.state, "Critical");
+        assert!(insights.oldest_message_risk.detail.contains("Messages are aging too long"));
+    }
+
+    #[test]
+    fn queue_insights_warn_when_backlog_is_nearly_flat() {
+        let detail = QueueDetail {
+            name: "orders".to_string(),
+            arn: "arn:aws:sqs:eu-west-1:123456789012:orders".to_string(),
+            attributes: vec![
+                ("ApproximateNumberOfMessages".to_string(), "40".to_string()),
+                (
+                    "ApproximateNumberOfMessagesNotVisible".to_string(),
+                    "10".to_string(),
+                ),
+                (
+                    "ApproximateNumberOfMessagesDelayed".to_string(),
+                    "0".to_string(),
+                ),
+                ("MessageRetentionPeriod".to_string(), "345600".to_string()),
+            ],
+        };
+        let metrics = QueueCloudWatchMetrics {
+            window_secs: 3600,
+            messages_sent: 100.0,
+            messages_received: 100.0,
+            messages_deleted: 102.0,
+            empty_receives: 0.0,
+            oldest_message_age_secs: Some(600.0),
+        };
+
+        let insights = compute_queue_insights(&detail, Some(&metrics));
+
+        assert_eq!(insights.drain_outlook.state, "Warning");
+        assert_eq!(insights.time_to_empty.state, "Warning");
     }
 }
