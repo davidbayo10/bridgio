@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Tabs},
 };
 
-use crate::app::App;
+use crate::app::{App, StatusLevel};
 use crate::models::View;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -25,11 +25,22 @@ fn render_info(frame: &mut Frame, area: Rect, app: &App) {
     let region = app.current_region();
 
     let status_span = if app.loading {
-        Span::styled("  ⟳ loading…", Style::default().fg(Color::Yellow))
-    } else if let Some(err) = &app.status {
         Span::styled(
-            format!("  ✗ {err}"),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            "  ⟳ loading…",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if let Some(status) = &app.status {
+        let (icon, color) = match status.level {
+            StatusLevel::Info => ("•", Color::Cyan),
+            StatusLevel::Success => ("✓", Color::Green),
+            StatusLevel::Error => ("✗", Color::Red),
+        };
+
+        Span::styled(
+            format!("  {icon} {}", status.text),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled("  ✓ ready", Style::default().fg(Color::Green))
@@ -43,10 +54,10 @@ fn render_info(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("│ "),
-        Span::styled("profile: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("profile: ", Style::default().fg(Color::Gray)),
         Span::styled(profile, Style::default().fg(Color::White)),
         Span::raw("  "),
-        Span::styled("region: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("region: ", Style::default().fg(Color::Gray)),
         Span::styled(region, Style::default().fg(Color::Yellow)),
         status_span,
     ]);
@@ -54,7 +65,7 @@ fn render_info(frame: &mut Frame, area: Rect, app: &App) {
     let para = Paragraph::new(line).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
+            .border_style(Style::default().fg(Color::Gray)),
     );
     frame.render_widget(para, area);
 }
@@ -74,13 +85,18 @@ fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
             View::SnsList | View::SnsDetail => 1,
             _ => 0,
         },
+        View::QuitConfirm => match app.quit_return_view.as_ref().unwrap_or(&View::SqsList) {
+            View::SnsList | View::SnsDetail => 1,
+            View::Help => 2,
+            _ => 0,
+        },
     };
 
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::Gray)),
         )
         .select(selected)
         .highlight_style(

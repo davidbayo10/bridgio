@@ -43,7 +43,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
 
     // While loading and no stale data yet, render skeleton rows.
     let rows: Vec<Row> = if app.loading && app.topics.is_empty() {
-        let ghost = Style::default().fg(Color::DarkGray);
+        let ghost = Style::default().fg(Color::Gray);
         let skeletons = [
             ("░░░░░░░░░░░░░░░░░░░░░░", "░░", "░░░░░░░░░░░░░░░░░░░░░░░░░"),
             ("░░░░░░░░░░░░░░", "░░░", "░░░░░░░░░░░░░░░░░░"),
@@ -70,7 +70,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                 if selected {
                     let sel = Style::default()
                         .fg(Color::Black)
-                        .bg(Color::Green)
+                        .bg(Color::Cyan)
                         .add_modifier(Modifier::BOLD);
                     Row::new([
                         Cell::from(format!("● {}", t.name)).style(sel),
@@ -81,7 +81,7 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                     Row::new([
                         Cell::from(t.name.clone()),
                         Cell::from(t.subscriptions_confirmed.to_string()),
-                        Cell::from(t.arn.clone()).style(Style::default().fg(Color::DarkGray)),
+                        Cell::from(t.arn.clone()).style(Style::default().fg(Color::Gray)),
                     ])
                 }
             })
@@ -122,11 +122,12 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
                     topics.len(),
                     app.topics.len()
                 ))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(Style::default().fg(Color::Gray)),
         )
         .row_highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
+                .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -159,8 +160,8 @@ fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
         )
     } else {
         (
-            "  [ / ] search   [ Space ] select   [ F5 ] refresh".to_string(),
-            Style::default().fg(Color::DarkGray),
+            "  [ / ] search (* and ?)   [ Space ] select   [ Cmd+R ] refresh".to_string(),
+            Style::default().fg(Color::Gray),
         )
     };
 
