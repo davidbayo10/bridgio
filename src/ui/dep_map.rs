@@ -3,11 +3,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::app::App;
 use crate::models::name_from_arn;
+use crate::ui::theme::panel_block;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Split: map content + hint bar at the bottom.
@@ -248,10 +249,8 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let para = Paragraph::new(visible_lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Dependency Map{scroll_hint} "))
-            .border_style(Style::default().fg(Color::Cyan)),
+        panel_block(Style::default().fg(Color::Cyan))
+            .title(format!(" Dependency Map{scroll_hint} ")),
     );
 
     frame.render_widget(para, area);
@@ -259,12 +258,8 @@ fn render_map(frame: &mut Frame, area: Rect, app: &App) {
 
 fn render_hint(frame: &mut Frame, area: Rect) {
     let para = Paragraph::new(Line::from(Span::raw(
-        "  [ ↑↓ / j k ] scroll   [ m / Esc ] close   [ x ] clear selection",
+        "[ ↑↓ / j k ] scroll   [ m / Esc ] close   [ x ] clear selection",
     )))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Gray)),
-    );
+    .block(panel_block(Style::default().fg(Color::Gray)));
     frame.render_widget(para, area);
 }

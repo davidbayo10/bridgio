@@ -1,9 +1,10 @@
+use crate::ui::theme::panel_block;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 pub fn render(frame: &mut Frame, area: Rect) {
@@ -39,11 +40,9 @@ pub fn render(frame: &mut Frame, area: Rect) {
     ];
 
     let para = Paragraph::new(text).alignment(Alignment::Center).block(
-        Block::default()
-            .borders(Borders::ALL)
+        panel_block(Style::default().fg(Color::Yellow))
             .title(" Confirm Exit ")
-            .title_alignment(Alignment::Center)
-            .border_style(Style::default().fg(Color::Yellow)),
+            .title_alignment(Alignment::Center),
     );
 
     frame.render_widget(para, popup);

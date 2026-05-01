@@ -3,11 +3,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Paragraph, Tabs},
 };
 
 use crate::app::{App, StatusLevel};
 use crate::models::View;
+use crate::ui::theme::panel_block;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     // Split header into: [left info] [tabs]
@@ -62,11 +63,7 @@ fn render_info(frame: &mut Frame, area: Rect, app: &App) {
         status_span,
     ]);
 
-    let para = Paragraph::new(line).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Gray)),
-    );
+    let para = Paragraph::new(line).block(panel_block(Style::default().fg(Color::Gray)));
     frame.render_widget(para, area);
 }
 
@@ -93,11 +90,7 @@ fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
     };
 
     let tabs = Tabs::new(titles)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Gray)),
-        )
+        .block(panel_block(Style::default().fg(Color::Gray)))
         .select(selected)
         .highlight_style(
             Style::default()

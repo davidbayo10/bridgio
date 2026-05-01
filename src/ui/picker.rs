@@ -2,11 +2,12 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState},
+    widgets::{Clear, List, ListItem, ListState},
 };
 
 use crate::app::App;
 use crate::models::{AWS_REGIONS, View};
+use crate::ui::theme::panel_block;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let is_profile = app.view == View::ProfilePicker;
@@ -23,9 +24,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         " Select region   (↑↓ / j k  Enter  Esc) "
     };
 
-    // Size the popup to fit the longest item + borders, capped to available space.
+    // Size the popup to fit the longest item + highlight symbol + border padding.
     let max_label = items.iter().map(|s| s.len()).max().unwrap_or(10) as u16;
-    let popup_w = (max_label + 4).min(area.width.saturating_sub(4));
+    let title_width = title.len() as u16;
+    let popup_w = (max_label.max(title_width) + 6).min(area.width.saturating_sub(4));
     let popup_h = (items.len() as u16 + 2).min(area.height.saturating_sub(2));
 
     let popup = centered_rect(popup_w, popup_h, area);
@@ -36,12 +38,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let list_items: Vec<ListItem> = items.iter().map(|s| ListItem::new(*s)).collect();
 
     let list = List::new(list_items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(Color::Cyan)),
-        )
+        .block(panel_block(Style::default().fg(Color::Cyan)).title(title))
         .highlight_style(
             Style::default()
                 .fg(Color::Black)

@@ -186,7 +186,7 @@ impl App {
         match self.sort_mode {
             SortMode::Name => {} // already sorted by name from AWS layer
             SortMode::MessagesDesc => {
-                result.sort_by(|a, b| b.approx_messages.cmp(&a.approx_messages));
+                result.sort_by_key(|b| std::cmp::Reverse(b.approx_messages));
             }
             SortMode::MessagesAsc => {
                 result.sort_by_key(|q| q.approx_messages);
@@ -226,7 +226,7 @@ impl App {
         }
 
         if is_manual_refresh_key(key) {
-            self.trigger_refresh();
+            self.trigger_manual_refresh();
             return;
         }
 
@@ -291,21 +291,17 @@ impl App {
         use KeyCode::*;
         match key.code {
             // View switch (resets search)
-            Char('1') => {
-                if self.view != View::SqsList {
-                    self.view = View::SqsList;
-                    self.list_cursor = 0;
-                    self.search_query.clear();
-                    self.search_active = false;
-                }
+            Char('1') if self.view != View::SqsList => {
+                self.view = View::SqsList;
+                self.list_cursor = 0;
+                self.search_query.clear();
+                self.search_active = false;
             }
-            Char('2') => {
-                if self.view != View::SnsList {
-                    self.view = View::SnsList;
-                    self.list_cursor = 0;
-                    self.search_query.clear();
-                    self.search_active = false;
-                }
+            Char('2') if self.view != View::SnsList => {
+                self.view = View::SnsList;
+                self.list_cursor = 0;
+                self.search_query.clear();
+                self.search_active = false;
             }
             // Profile picker
             Char('p') | Char('P') => {
@@ -320,15 +316,11 @@ impl App {
                 self.view = View::RegionPicker;
             }
             // Navigation
-            Up | Char('k') => {
-                if self.list_cursor > 0 {
-                    self.list_cursor -= 1;
-                }
+            Up | Char('k') if self.list_cursor > 0 => {
+                self.list_cursor -= 1;
             }
-            Down | Char('j') => {
-                if self.list_cursor + 1 < self.list_len() {
-                    self.list_cursor += 1;
-                }
+            Down | Char('j') if self.list_cursor + 1 < self.list_len() => {
+                self.list_cursor += 1;
             }
             // Open detail
             Enter => self.open_detail(),
@@ -336,22 +328,18 @@ impl App {
             Char('/') => {
                 self.search_active = true;
             }
-            Esc => {
-                if !self.search_query.is_empty() {
-                    self.search_query.clear();
-                    self.list_cursor = 0;
-                }
+            Esc if !self.search_query.is_empty() => {
+                self.search_query.clear();
+                self.list_cursor = 0;
             }
             // Sort (SQS only): Name → ↓msgs → ↑msgs → Name
-            Char('s') => {
-                if self.view == View::SqsList {
-                    self.sort_mode = match self.sort_mode {
-                        SortMode::Name => SortMode::MessagesDesc,
-                        SortMode::MessagesDesc => SortMode::MessagesAsc,
-                        SortMode::MessagesAsc => SortMode::Name,
-                    };
-                    self.list_cursor = 0;
-                }
+            Char('s') if self.view == View::SqsList => {
+                self.sort_mode = match self.sort_mode {
+                    SortMode::Name => SortMode::MessagesDesc,
+                    SortMode::MessagesDesc => SortMode::MessagesAsc,
+                    SortMode::MessagesAsc => SortMode::Name,
+                };
+                self.list_cursor = 0;
             }
             // Toggle selection with Space
             Char(' ') => match self.view {
@@ -378,12 +366,10 @@ impl App {
                 _ => {}
             },
             // Open dependency map
-            Char('m') => {
-                if !self.selected_queues.is_empty() || !self.selected_topics.is_empty() {
-                    self.previous_view = self.view.clone();
-                    self.dep_scroll = 0;
-                    self.view = View::DependencyMap;
-                }
+            Char('m') if (!self.selected_queues.is_empty() || !self.selected_topics.is_empty()) => {
+                self.previous_view = self.view.clone();
+                self.dep_scroll = 0;
+                self.view = View::DependencyMap;
             }
             // Clear all selections
             Char('x') => {
@@ -405,10 +391,8 @@ impl App {
             Esc | Char('m') => {
                 self.view = self.previous_view.clone();
             }
-            Up | Char('k') => {
-                if self.dep_scroll > 0 {
-                    self.dep_scroll -= 1;
-                }
+            Up | Char('k') if self.dep_scroll > 0 => {
+                self.dep_scroll -= 1;
             }
             Down | Char('j') => {
                 self.dep_scroll += 1;
@@ -432,15 +416,11 @@ impl App {
             AWS_REGIONS.len()
         };
         match key.code {
-            Up | Char('k') => {
-                if self.picker_cursor > 0 {
-                    self.picker_cursor -= 1;
-                }
+            Up | Char('k') if self.picker_cursor > 0 => {
+                self.picker_cursor -= 1;
             }
-            Down | Char('j') => {
-                if self.picker_cursor + 1 < list_len {
-                    self.picker_cursor += 1;
-                }
+            Down | Char('j') if self.picker_cursor + 1 < list_len => {
+                self.picker_cursor += 1;
             }
             Enter => {
                 if is_profile {
@@ -627,6 +607,76 @@ impl App {
         };
     }
 
+    fn trigger_manual_refresh(&mut self) {
+        match self.view {
+            View::SqsDetail => self.refresh_active_sqs_detail(),
+            _ => self.trigger_refresh(),
+        }
+    }
+
+    fn refresh_active_sqs_detail(&mut self) {
+        let Some(queue_url) = self.active_sqs_queue_url.clone() else {
+            return;
+        };
+
+        self.status = None;
+        self.queue_detail = None;
+        self.queue_insights = Some(QueueInsightsState::Loading);
+        self.queue_cloudwatch_metrics = None;
+        self.start_requests(2);
+        self.spawn_sqs_detail_requests(queue_url);
+    }
+
+    fn spawn_sqs_detail_requests(&self, queue_url: String) {
+        let tx = self.event_tx.clone();
+        let profile = self.current_profile().to_string();
+        let region = self.current_region().to_string();
+        let detail_url = queue_url.clone();
+        tokio::spawn(async move {
+            match load_sdk_config(&profile, &region).await {
+                Ok(cfg) => {
+                    let svc = SqsService::new(&cfg);
+                    match svc.get_queue_detail(&detail_url).await {
+                        Ok(detail) => {
+                            let _ = tx.send(AppEvent::SqsDetailLoaded {
+                                queue_url: detail_url,
+                                detail,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppEvent::Error(e.to_string()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::Error(e.to_string()));
+                }
+            }
+        });
+
+        let tx = self.event_tx.clone();
+        let profile = self.current_profile().to_string();
+        let region = self.current_region().to_string();
+        tokio::spawn(async move {
+            match load_sdk_config(&profile, &region).await {
+                Ok(cfg) => {
+                    let svc = CloudWatchService::new(&cfg);
+                    let result = svc
+                        .get_sqs_queue_metrics(&queue_url)
+                        .await
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(AppEvent::SqsCloudWatchLoaded { queue_url, result });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::SqsCloudWatchLoaded {
+                        queue_url,
+                        result: Err(e.to_string()),
+                    });
+                }
+            }
+        });
+    }
+
     fn open_detail(&mut self) {
         match self.view {
             View::SqsList => {
@@ -645,55 +695,7 @@ impl App {
                 self.queue_insights = Some(QueueInsightsState::Loading);
                 self.queue_cloudwatch_metrics = None;
                 self.start_requests(2);
-                let tx = self.event_tx.clone();
-                let profile = self.current_profile().to_string();
-                let region = self.current_region().to_string();
-                let detail_url = url.clone();
-                tokio::spawn(async move {
-                    match load_sdk_config(&profile, &region).await {
-                        Ok(cfg) => {
-                            let svc = SqsService::new(&cfg);
-                            match svc.get_queue_detail(&detail_url).await {
-                                Ok(detail) => {
-                                    let _ = tx.send(AppEvent::SqsDetailLoaded {
-                                        queue_url: detail_url,
-                                        detail,
-                                    });
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(AppEvent::Error(e.to_string()));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(AppEvent::Error(e.to_string()));
-                        }
-                    }
-                });
-                let tx = self.event_tx.clone();
-                let profile = self.current_profile().to_string();
-                let region = self.current_region().to_string();
-                tokio::spawn(async move {
-                    match load_sdk_config(&profile, &region).await {
-                        Ok(cfg) => {
-                            let svc = CloudWatchService::new(&cfg);
-                            let result = svc
-                                .get_sqs_queue_metrics(&url)
-                                .await
-                                .map_err(|e| e.to_string());
-                            let _ = tx.send(AppEvent::SqsCloudWatchLoaded {
-                                queue_url: url,
-                                result,
-                            });
-                        }
-                        Err(e) => {
-                            let _ = tx.send(AppEvent::SqsCloudWatchLoaded {
-                                queue_url: url,
-                                result: Err(e.to_string()),
-                            });
-                        }
-                    }
-                });
+                self.spawn_sqs_detail_requests(url);
             }
             View::SnsList => {
                 let topics = self.filtered_topics();
@@ -913,11 +915,28 @@ pub async fn run(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{InsightSeverity, QueueInsight, QueueInsights};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn app_for_test() -> App {
         let (tx, _rx) = mpsc::unbounded_channel();
         App::new(vec!["default".to_string()], tx)
+    }
+
+    fn ready_queue_insights() -> QueueInsightsState {
+        let insight = QueueInsight {
+            state: "ok".to_string(),
+            detail: "ok".to_string(),
+            severity: InsightSeverity::Normal,
+        };
+
+        QueueInsightsState::Ready(Box::new(QueueInsights {
+            drain_outlook: insight.clone(),
+            time_to_empty: insight.clone(),
+            completion_pressure: insight.clone(),
+            oldest_message_risk: insight.clone(),
+            processing_pressure: insight,
+        }))
     }
 
     #[test]
@@ -954,6 +973,83 @@ mod tests {
             KeyCode::Char('r'),
             KeyModifiers::SUPER | KeyModifiers::CONTROL,
         )));
+    }
+
+    #[tokio::test]
+    async fn command_r_in_sqs_list_starts_global_refresh_requests() {
+        let mut app = app_for_test();
+        app.view = View::SqsList;
+        app.status = Some(StatusMessage {
+            level: StatusLevel::Info,
+            text: "stale".to_string(),
+        });
+
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
+
+        assert_eq!(app.pending_requests, 3);
+        assert!(app.status.is_none());
+    }
+
+    #[tokio::test]
+    async fn command_r_in_sqs_detail_refreshes_only_active_detail() {
+        let mut app = app_for_test();
+        let queue_url = "https://sqs.eu-west-1.amazonaws.com/123456789012/test-queue".to_string();
+        app.view = View::SqsDetail;
+        app.active_sqs_queue_url = Some(queue_url.clone());
+        app.queue_detail = Some(QueueDetail {
+            name: "test-queue".to_string(),
+            arn: "arn:aws:sqs:eu-west-1:123456789012:test-queue".to_string(),
+            attributes: vec![("VisibilityTimeout".to_string(), "30".to_string())],
+        });
+        app.queue_insights = Some(ready_queue_insights());
+        app.queue_cloudwatch_metrics = Some(Ok(QueueCloudWatchMetrics::default()));
+        app.detail_scroll = 4;
+        app.sub_scroll = 2;
+        app.detail_on_subs = true;
+        app.status = Some(StatusMessage {
+            level: StatusLevel::Error,
+            text: "old error".to_string(),
+        });
+
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
+
+        assert_eq!(app.view, View::SqsDetail);
+        assert_eq!(
+            app.active_sqs_queue_url.as_deref(),
+            Some(queue_url.as_str())
+        );
+        assert!(app.queue_detail.is_none());
+        assert!(matches!(
+            app.queue_insights,
+            Some(QueueInsightsState::Loading)
+        ));
+        assert!(app.queue_cloudwatch_metrics.is_none());
+        assert_eq!(app.pending_requests, 2);
+        assert_eq!(app.detail_scroll, 4);
+        assert_eq!(app.sub_scroll, 2);
+        assert!(app.detail_on_subs);
+        assert!(app.status.is_none());
+    }
+
+    #[tokio::test]
+    async fn command_r_in_sqs_detail_without_active_url_is_noop() {
+        let mut app = app_for_test();
+        app.view = View::SqsDetail;
+        app.queue_detail = Some(QueueDetail {
+            name: "test-queue".to_string(),
+            arn: "arn:aws:sqs:eu-west-1:123456789012:test-queue".to_string(),
+            attributes: vec![("VisibilityTimeout".to_string(), "30".to_string())],
+        });
+        app.queue_insights = Some(ready_queue_insights());
+
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::SUPER));
+
+        assert!(app.queue_detail.is_some());
+        assert!(matches!(
+            app.queue_insights,
+            Some(QueueInsightsState::Ready(_))
+        ));
+        assert_eq!(app.pending_requests, 0);
     }
 
     #[test]

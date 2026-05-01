@@ -2,19 +2,17 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, Row, Table},
+    widgets::{Cell, Row, Table},
 };
 
 use crate::app::App;
 use crate::models::{InsightSeverity, QueueInsight, QueueInsightsState};
+use crate::ui::theme::panel_block;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let Some(detail) = &app.queue_detail else {
         let placeholder = Table::new(Vec::<Row>::new(), [Constraint::Percentage(100)]).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" SQS Queue Detail — Loading… ")
-                .border_style(Style::default().fg(Color::Gray)),
+            panel_block(Style::default().fg(Color::Gray)).title(" SQS Queue Detail — Loading… "),
         );
         frame.render_widget(placeholder, area);
         return;
@@ -100,12 +98,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         [Constraint::Percentage(35), Constraint::Percentage(65)],
     )
     .header(attr_header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" ← SQS: {}{scroll_hint}", detail.name))
-            .border_style(attr_border),
-    );
+    .block(panel_block(attr_border).title(format!(" ← SQS: {}{scroll_hint}", detail.name)));
 
     frame.render_widget(attr_table, top_chunks[1]);
 
@@ -167,12 +160,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ],
     )
     .header(sub_header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" SNS Subscriptions{sub_hint}"))
-            .border_style(sub_border),
-    );
+    .block(panel_block(sub_border).title(format!(" SNS Subscriptions{sub_hint}")));
 
     frame.render_widget(sub_table, chunks[1]);
 }
@@ -223,12 +211,7 @@ fn render_insights(frame: &mut Frame, area: Rect, app: &App, border_style: Style
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Queue Signals — last 1h ")
-            .border_style(border_style),
-    );
+    .block(panel_block(border_style).title(" Queue Signals — last 1h "));
 
     frame.render_widget(table, area);
 }
