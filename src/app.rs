@@ -291,20 +291,18 @@ impl App {
         use KeyCode::*;
         match key.code {
             // View switch (resets search)
-            Char('1')
-                if self.view != View::SqsList => {
-                    self.view = View::SqsList;
-                    self.list_cursor = 0;
-                    self.search_query.clear();
-                    self.search_active = false;
-                }
-            Char('2')
-                if self.view != View::SnsList => {
-                    self.view = View::SnsList;
-                    self.list_cursor = 0;
-                    self.search_query.clear();
-                    self.search_active = false;
-                }
+            Char('1') if self.view != View::SqsList => {
+                self.view = View::SqsList;
+                self.list_cursor = 0;
+                self.search_query.clear();
+                self.search_active = false;
+            }
+            Char('2') if self.view != View::SnsList => {
+                self.view = View::SnsList;
+                self.list_cursor = 0;
+                self.search_query.clear();
+                self.search_active = false;
+            }
             // Profile picker
             Char('p') | Char('P') => {
                 self.previous_view = self.view.clone();
@@ -318,35 +316,31 @@ impl App {
                 self.view = View::RegionPicker;
             }
             // Navigation
-            Up | Char('k')
-                if self.list_cursor > 0 => {
-                    self.list_cursor -= 1;
-                }
-            Down | Char('j')
-                if self.list_cursor + 1 < self.list_len() => {
-                    self.list_cursor += 1;
-                }
+            Up | Char('k') if self.list_cursor > 0 => {
+                self.list_cursor -= 1;
+            }
+            Down | Char('j') if self.list_cursor + 1 < self.list_len() => {
+                self.list_cursor += 1;
+            }
             // Open detail
             Enter => self.open_detail(),
             // Search
             Char('/') => {
                 self.search_active = true;
             }
-            Esc
-                if !self.search_query.is_empty() => {
-                    self.search_query.clear();
-                    self.list_cursor = 0;
-                }
+            Esc if !self.search_query.is_empty() => {
+                self.search_query.clear();
+                self.list_cursor = 0;
+            }
             // Sort (SQS only): Name → ↓msgs → ↑msgs → Name
-            Char('s')
-                if self.view == View::SqsList => {
-                    self.sort_mode = match self.sort_mode {
-                        SortMode::Name => SortMode::MessagesDesc,
-                        SortMode::MessagesDesc => SortMode::MessagesAsc,
-                        SortMode::MessagesAsc => SortMode::Name,
-                    };
-                    self.list_cursor = 0;
-                }
+            Char('s') if self.view == View::SqsList => {
+                self.sort_mode = match self.sort_mode {
+                    SortMode::Name => SortMode::MessagesDesc,
+                    SortMode::MessagesDesc => SortMode::MessagesAsc,
+                    SortMode::MessagesAsc => SortMode::Name,
+                };
+                self.list_cursor = 0;
+            }
             // Toggle selection with Space
             Char(' ') => match self.view {
                 View::SqsList => {
@@ -372,12 +366,11 @@ impl App {
                 _ => {}
             },
             // Open dependency map
-            Char('m')
-                if (!self.selected_queues.is_empty() || !self.selected_topics.is_empty()) => {
-                    self.previous_view = self.view.clone();
-                    self.dep_scroll = 0;
-                    self.view = View::DependencyMap;
-                }
+            Char('m') if (!self.selected_queues.is_empty() || !self.selected_topics.is_empty()) => {
+                self.previous_view = self.view.clone();
+                self.dep_scroll = 0;
+                self.view = View::DependencyMap;
+            }
             // Clear all selections
             Char('x') => {
                 self.selected_queues.clear();
@@ -398,10 +391,9 @@ impl App {
             Esc | Char('m') => {
                 self.view = self.previous_view.clone();
             }
-            Up | Char('k')
-                if self.dep_scroll > 0 => {
-                    self.dep_scroll -= 1;
-                }
+            Up | Char('k') if self.dep_scroll > 0 => {
+                self.dep_scroll -= 1;
+            }
             Down | Char('j') => {
                 self.dep_scroll += 1;
             }
@@ -424,14 +416,12 @@ impl App {
             AWS_REGIONS.len()
         };
         match key.code {
-            Up | Char('k')
-                if self.picker_cursor > 0 => {
-                    self.picker_cursor -= 1;
-                }
-            Down | Char('j')
-                if self.picker_cursor + 1 < list_len => {
-                    self.picker_cursor += 1;
-                }
+            Up | Char('k') if self.picker_cursor > 0 => {
+                self.picker_cursor -= 1;
+            }
+            Down | Char('j') if self.picker_cursor + 1 < list_len => {
+                self.picker_cursor += 1;
+            }
             Enter => {
                 if is_profile {
                     self.profile_idx = self.picker_cursor;
