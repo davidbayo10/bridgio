@@ -7,6 +7,7 @@ pub mod sns_detail;
 pub mod sns_list;
 pub mod sqs_detail;
 pub mod sqs_list;
+pub mod theme;
 
 use ratatui::{
     Frame,

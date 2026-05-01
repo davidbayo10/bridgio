@@ -3,10 +3,11 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Cell, Paragraph, Row, Table, TableState},
 };
 
 use crate::app::App;
+use crate::ui::theme::panel_block;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
@@ -114,16 +115,11 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(
-                    " SNS Topics ({}/{}){empty_hint} ",
-                    topics.len(),
-                    app.topics.len()
-                ))
-                .border_style(Style::default().fg(Color::Gray)),
-        )
+        .block(panel_block(Style::default().fg(Color::Gray)).title(format!(
+            " SNS Topics ({}/{}){empty_hint} ",
+            topics.len(),
+            app.topics.len()
+        )))
         .row_highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
@@ -142,33 +138,29 @@ fn render_table(frame: &mut Frame, area: Rect, app: &App) {
 fn render_search_bar(frame: &mut Frame, area: Rect, app: &App) {
     let (text, border_style) = if app.search_active {
         (
-            format!(" / {}█", app.search_query),
+            format!("/ {}█", app.search_query),
             Style::default().fg(Color::Yellow),
         )
     } else if !app.search_query.is_empty() {
         (
-            format!(" / {}  (Esc clears)", app.search_query),
+            format!("/ {}  (Esc clears)", app.search_query),
             Style::default().fg(Color::Yellow),
         )
     } else if !app.selected_topics.is_empty() {
         (
             format!(
-                "  ● {} selected   [ Space ] toggle   [ m ] dependency map   [ x ] clear",
+                "● {} selected   [ Space ] toggle   [ m ] dependency map   [ x ] clear",
                 app.selected_topics.len()
             ),
             Style::default().fg(Color::Green),
         )
     } else {
         (
-            "  [ / ] search (* and ?)   [ Space ] select   [ Cmd+R ] refresh".to_string(),
+            "[ / ] search (* and ?)   [ Space ] select   [ Cmd+R ] refresh".to_string(),
             Style::default().fg(Color::Gray),
         )
     };
 
-    let para = Paragraph::new(Line::from(vec![Span::raw(text)])).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style),
-    );
+    let para = Paragraph::new(Line::from(vec![Span::raw(text)])).block(panel_block(border_style));
     frame.render_widget(para, area);
 }

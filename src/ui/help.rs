@@ -1,9 +1,10 @@
+use crate::ui::theme::panel_block;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 const HELP_TEXT: &[(&str, &str)] = &[
@@ -38,7 +39,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         .map(|(key, desc)| {
             Line::from(vec![
                 Span::styled(
-                    format!("  {key:<20}"),
+                    format!("{key:<20}"),
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -50,11 +51,9 @@ pub fn render(frame: &mut Frame, area: Rect) {
 
     let para = Paragraph::new(lines)
         .block(
-            Block::default()
-                .borders(Borders::ALL)
+            panel_block(Style::default().fg(Color::Cyan))
                 .title(" Keybindings — Esc / ? to close ")
-                .title_alignment(Alignment::Center)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title_alignment(Alignment::Center),
         )
         .alignment(Alignment::Left);
 
